@@ -1,0 +1,56 @@
+#!/usr/bin/python3
+#
+# Generic wrapper for openstack
+# Allows to fetch ALL volumes, snapshots, backups and instances using paging
+#
+# extra controls env vars:
+#
+# PATCH_FLAVOR=yes
+#    uses paging to fetch all flavors
+#
+
+import sys
+import os
+
+from novaclient.v2 import servers as srv
+from novaclient.v2 import flavors as flv
+
+from cinderclient.v3 import volumes as vol
+from cinderclient.v3 import volume_snapshots as volsnap
+from cinderclient.v3 import volume_backups as volback
+
+
+def patch_class(cls, field):
+	"""Nova and Cinder clients list() patch"""
+	old_list = cls.list
+
+	def custom_list(self, *args, **kwargs):
+		if kwargs.get("marker") is not None or kwargs.get("limit") is not None:
+			return old_list(self, *args, **kwargs)
+		ret = list()
+		reply = old_list(self, *args, **kwargs)
+		while len(reply) > 0:
+			ret = ret + reply
+			marker = reply[len(reply) - 1].id
+			nkwargs = dict(**kwargs)
+			nkwargs['marker'] = marker
+			reply = old_list(self, *args, **nkwargs)
+		return ret
+
+	cls.list = custom_list
+
+
+# Nova patches
+patch_class(srv.ServerManager, "servers")
+if os.environ.get("PATCH_FLAVOR", "").lower() in ["yes", "1", "true", "on"]:
+	patch_class(flv.FlavorManager, "flavors")
+
+# Cinder patches
+patch_class(vol.VolumeManager, "volumes")
+patch_class(volsnap.SnapshotManager, "snapshots")
+patch_class(volback.VolumeBackupManager, "backups")
+
+from openstackclient.shell import main
+
+if __name__ == "__main__":
+    sys.exit(main())
